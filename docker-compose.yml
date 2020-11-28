@@ -1,0 +1,171 @@
+version: "2"
+services:
+  
+  zookeeper:
+    image: strimzi/kafka:0.20.0-kafka-2.6.0
+    command: [
+        "sh", "-c",
+        "bin/zookeeper-server-start.sh config/zookeeper.properties"
+      ]
+    ports:
+    - "2181:2181"
+    environment:
+      LOG_DIR: /tmp/logs
+    networks:
+      - fdp  
+
+  kafka:
+    image: strimzi/kafka:0.20.0-kafka-2.6.0
+    command: [
+      "sh", "-c",
+      "bin/kafka-server-start.sh config/server.properties --override listeners=$${KAFKA_LISTENERS} --override advertised.listeners=$${KAFKA_ADVERTISED_LISTENERS} --override zookeeper.connect=$${KAFKA_ZOOKEEPER_CONNECT}"
+    ]
+    depends_on:
+    - zookeeper
+    ports:
+    - "9092:9092"
+    environment:
+      LOG_DIR: "/tmp/logs"
+      KAFKA_CREATE_TOPICS: "flight_delay_classification_request:1:1"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    networks:
+      - fdp
+
+  mongo:
+    container_name: mongo2
+    image: mongo:latest
+    command: mongod
+    networks:
+      - fdp
+    ports:
+      - "27017:27017"
+    volumes:
+      - /Users/txni/tools/mongodb/data/db:/data/db
+  
+  mongo_fill:
+    build: ./mongo
+    networks:
+      - fdp
+
+  spark-master:
+    image: bde2020/spark-master:2.4.4-hadoop2.7
+    container_name: spark-master2
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "9001:9001"
+    depends_on:
+      - kafka
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - "constraint:node==spark-master"
+    networks:
+         - fdp
+    volumes:
+      - ./models:/models
+
+  spark-worker-1:
+    build: ./spark
+    container_name: spark-worker2
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    environment:
+      - "SPARK_MASTER=spark://spark-master:7077"
+      - "constraint:node==spark-master"
+    volumes:
+      - ./models:/models
+      #- ./prediction-job:/prediction-job
+    networks:
+        - fdp
+    
+  web:
+    build: ./flask
+    container_name: flask
+    depends_on:
+      - mongo
+    ports:
+      - "5000:5000"
+    networks:
+        - fdp
+  # zookeeper:
+  #   image: zookeeper:3.5.5
+  #   hostname: zookeeper
+  #   ports:
+  #     - "2181:2181"
+  #   environment:
+  #       ZOO_MY_ID: 1
+  #       ZOO_PORT: 2181
+  #       ZOO_SERVERS: server.1=zoo1:2888:3888
+  #   volumes:
+  #     #- ./zk-single-kafka-single/zoo1/data:/data
+  #     - ./kafka_2.12-2.3.0/config/zookeeper.properties:/config
+  #   networks:
+  #     - fdp
+  # kafka:
+  #   image: wurstmeister/kafka:2.12-2.3.0
+  #   command: [start-kafka.sh]
+  #   ports:
+  #     - "9092:9092"
+  #   hostname: kafka
+  #   environment:
+  #     KAFKA_CREATE_TOPICS: "flight_delay_classification_request:1:1" # topic:partition:replicas
+  #     KAFKA_ADVERTISED_HOST_NAME: kafka # docker-machine ip
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_PORT: 9092
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   depends_on:
+  #     - "zookeeper"
+  #   networks:
+  #     - fdp
+
+
+#   mongo:
+#     container_name: mongo
+#     image: mongo:3.4
+#     command: --nojournal
+#     networks:
+#       - fdp
+#     ports:
+#       - "27017:27017"
+#     environment:
+#       - MONGO_INITDB_ROOT_USERNAME=root
+#       - MONGO_INITDB_ROOT_PASSWORD=example
+
+#   web:
+#     container_name: web
+#     build:
+#       context: ./web
+#     ports:
+#       - "3000:3000"
+#     depends_on:
+#       - orion
+#     networks:
+#       - fdp
+#     command: bash -c "sh /entities/createPredictionEntities.sh && sh /entities/subscribeReqPredictionTicket.sh && sh /entities/subscribeResPredictionTicket.sh && npm start"
+#     environment:
+#       - URL_CB=http://orion:1026/v2/entities/ReqTicketPrediction1/attrs
+#       - MONGO_URI=mongodb://root:example@mongo:27017/sth_test?authSource=admin
+#     volumes:
+#       - ./entities:/entities
+
+#   python:
+#     image: python:3
+#     container_name: python
+#     depends_on:
+#       - draco
+#     environment:
+#       - DRACO_ENDPOINT=draco:9090
+#     networks:
+#       - fdp
+#     command: bash -c "pip install --no-cache-dir -r /entities/requirements.txt && python /entities/runDraco.py && sh /entities/subscribeResPredictionTicketDraco.sh"
+#     volumes:
+#       - ./entities:/entities
+
+
+networks:
+  fdp:
